@@ -1,0 +1,28 @@
+#loading libraries 
+install.packages("assertive")
+install.packages("dplyr")
+install.packages("stringr")
+install.packages("tidyverse")
+library(assertive)
+library(dplyr)
+library(stringr)
+library(tidyverse)
+
+
+
+#import data
+new_car <- read.csv("C:\\Users\\Justin\\Documents\\data\\new_car\\USA_cars_datasets.csv")
+
+#overview of data
+str(new_car)
+dim(new_car) #dimension (2499 rows and 13 col)
+class(new_car) #view its class (data.frame)
+head(new_car)
+glimpse(new_car)
+sapply(new_car,class)
+names(new_car) #print the column names
+nrow(new_car)
+rowSums(is.na(new_car))
+summary(new_car)
+
+sum(duplicated(new_car)) #finding full duplicates
