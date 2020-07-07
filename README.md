@@ -1,4 +1,4 @@
-Abstract for Capstone Project CKME136
+Abstract for Capstone Project 
 	Problem and Theme
 There are approximately 40 million used vehicles sold each year, it is important for buyers or sellers to look at the past sales records for them to understand the value of similar cars in the catalog and help them getting a better deal in the market. There are many different factors that can affect a used vehicle’s price on the secondhand auction market, the main idea of this project is to build a training model with the existing dataset to identify how these factors will affect the sales price, then we can use the trained model to predict the sales price on the market for the future. 
 
