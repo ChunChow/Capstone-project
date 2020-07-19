@@ -1,0 +1,617 @@
+---
+title: "CKME136-edited"
+author: "Chun Chow"
+date: "2020/7/5"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+##Preparation and Data Import
+
+#loading libraries 
+#===============================================================
+```{r libraries}
+
+library(assertive)
+library(dplyr)
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(forcats)
+library(VIM) 
+library(forcats)
+library(scales)
+library(broom)
+library(GGally)
+library(tibble)
+library(gridExtra)
+library(fastDummies)
+library(rpart)
+library(FNN)
+```
+
+
+#Data Preprocessing
+#================================================================
+
+#Import data
+```{r new_car}
+new_car <- read.csv("C:\\Users\\Justin\\Documents\\data\\new_car\\USA_cars_datasets.csv")
+
+```
+
+#Overview of data
+#==============================================================
+```{r}
+str(new_car)
+head(new_car)
+summary(new_car)
+```
+
+#Check if there is any missing data
+```{r}
+
+sum(is.na(new_car))
+table(is.na(new_car))
+sum(complete.cases(new_car))
+```
+
+#Check is there any full duplicates in the data
+```{r}
+sum(duplicated(new_car)) 
+```
+
+#Checking levels on categorical data
+```{r}
+table(new_car$brand)
+table(new_car$model)
+table(new_car$title_status)
+table(new_car$color) #too many different color, may need clear later
+table(new_car$state)
+table(new_car$country)
+table(new_car$condition)
+```
+
+#Data Cleaning 
+#===========================================================
+
+```{r}
+#Remove unneeded columns, the x, vin and condition columns does not provide useful information to the analysis
+new_car[, c("X", "vin", "condition", "lot")] <- list(NULL)
+names(new_car)
+```
+
+#Change year column into factor for better analysis model
+```{r}
+new_car <- new_car %>%
+  mutate(year = as.factor(year))
+str(new_car)
+```
+
+#Quick look at all the color levels of the car
+```{r}
+ggplot(new_car, aes(color)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90))
+
+levels(new_car$color)
+```
+
+#Too many different color name with slightly different, may want to group some of the similar color into one category
+```{r}
+yellow <- c("beige", "triple yellow tri-coat", "yellow")
+red <- c("burgundy", "cayenne red", "maroon", "red", "royal crimson metallic tinted clearcoat", "ruby red", 
+         "ruby red metallic tinted clearcoat", "toreador red")
+grey <- c("charcoal", "gray", "magnetic metallic", "shadow black" )
+black <- c("black", "black clearcoat", "phantom black", "super black", "tuxedo black metallic")
+silver <- c("billet silver metallic clearcoat", "ingot silver" , "ingot silver metallic", "silver")
+blue <- c("blue","dark blue", "jazz blue pearlcoat", "kona blue metallic", "light blue", "lightning blue", "morningsky blue", "turquoise")
+white <- c("bright white clearcoat", "glacier white", "off-white", "oxford white", "pearl white", "white", 
+           "white platinum tri-coat metallic")
+brown <- c("brown", "tan" )
+
+orange <- c("competition orange", "orange"  )
+gold <- c("gold")
+green <- c("green" )
+purple <- c("purple")
+
+#New col name "color_collapsed" for the collapsing categories
+new_car2 <- new_car %>% 
+  mutate(color_collapsed = fct_collapse(color, Yellow = yellow, Red = red, Grey = grey , Black = black, Silver = silver, Blue = blue, White = white, Brown = brown, Orange = orange, Gold = gold, Green = green , Purple = purple )) 
+
+```
+
+#From 49 different color categories into just 14 categories
+```{r}
+new_car %>% count(color)
+
+new_car2 %>% count(color_collapsed)
+
+table(new_car2$color_collapsed)
+```
+
+#Some of the color is undefined in the data
+```{r}
+#61 cars label as "no_color"
+new_car2 %>%
+  filter(color == "no_color")
+
+#5 cars label as "color:"
+new_car2 %>%
+  filter(color == "color:")
+
+#one vehicle label as "guard" color
+new_car2 %>%
+  filter(color == "guard")
+```
+
+#Put them into not_identify
+```{r}
+not_identify <- c("color:", "no_color", "guard")
+
+new_car_collapsed <- new_car2 %>%
+  mutate(color_collapsed = fct_collapse(color_collapsed, Not_identify = not_identify))
+         
+```
+
+#Total factors in the color column
+```{r}
+levels(new_car_collapsed$color_collapsed)
+table(new_car_collapsed$color_collapsed)
+
+```
+
+#Turn not_identify value into NA
+```{r}
+new_car_collapsed <- new_car_collapsed %>%
+  mutate(color_collapsed = recode_factor(color_collapsed, "Not_identify" = NA_character_))
+
+
+sum(is.na(new_car_collapsed$color_collapsed))
+new_car_collapsed %>%
+  filter(is.na(color_collapsed))
+
+new_car_collapsed[, "color"] <- list(NULL)
+```
+
+#Use kNN imputation for the categorical NA value in "color_collapes" column
+```{r}
+new_car_collapsed_knn <- kNN(new_car_collapsed, variable = c("color_collapsed"), k =5)
+new_car_collapsed_knn[,"color_collapsed_imp"] <- list(NULL)
+
+sum(is.na(new_car_collapsed_knn$color_collapsed))
+
+knn_before <- table(new_car_collapsed$color_collapsed)
+knn_before <- as.data.frame(as.list(knn_before))
+
+knn_after <- table(new_car_collapsed_knn$color_collapsed)
+knn_after <- as.data.frame(as.list(knn_after))
+
+knn_compare <- rbind(knn_before, knn_after)
+rownames(knn_compare) <- c("Before kNN", "After kNN")
+str(new_car_collapsed_knn)
+knn_compare
+```
+
+
+
+
+#Identify the outliers on the Price and Mileage Column
+```{r}
+price_before <-ggplot(new_car_collapsed_knn, aes(x = 0,y = price)) +
+  geom_boxplot()
+mileage_before <- ggplot(new_car_collapsed_knn, aes(x = 0, y = mileage)) +
+  geom_boxplot()
+grid.arrange(price_before,mileage_before, nrow = 1)
+```
+
+#Remove outliers on the Price and Mileage Column
+```{r}
+Q_price <- quantile(new_car_collapsed_knn$price, probs = c(0.25, 0.75))
+iqr_price <- IQR(new_car_collapsed_knn$price)
+
+Q_mileage <- quantile(new_car_collapsed_knn$mileage, probs = c(0.25, 0.75))
+iqr_mileage <- IQR(new_car_collapsed_knn$mileage)
+
+new_car_outliers_removed <- new_car_collapsed_knn %>%
+  filter(price >(Q_price[1] - 1.5 * iqr_price) & price < (Q_price[2] + 1.5 * iqr_price) &
+         mileage >(Q_mileage[1] - 1.5 * iqr_mileage) & mileage < (Q_mileage[2] + 1.5 * iqr_mileage) )
+```
+
+
+#New dataset after removed outliers
+```{r}
+price_after <- ggplot(new_car_outliers_removed, aes(x = 0,y = price)) +
+  geom_boxplot()
+
+mileage_after <- ggplot(new_car_outliers_removed, aes(x = 0, y = mileage)) +
+  geom_boxplot() 
+  
+
+grid.arrange(price_after, mileage_after, nrow = 1)
+```
+
+#Exploratory Data Analysis
+#===========================================================================
+#Visualize the data
+
+#after cleaning graph
+```{r}
+ggplot(new_car_outliers_removed, aes(color_collapsed)) +
+  geom_bar(stat = "count", aes(fill =  color_collapsed)) +
+  scale_fill_manual(values = c("#FFCC33", "#CCCCCC", "#000000", "#0000FF", "cornsilk1", "#CC6600", "#990000", "#333333", "#FFCC00", "#FFCC66", "#66CC00", "#990099")) +
+  ggtitle("Total Count of All Color") +
+  theme_bw()
+```
+
+#Most of the cars are white in color
+```{r}
+new_car_outliers_removed %>%
+  group_by(color_collapsed) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+```
+
+
+#Distribution of the price
+```{r}
+ggplot(new_car_outliers_removed, aes(price)) +
+  geom_density(fill = "skyblue") +
+  scale_x_continuous(breaks = seq(min(new_car_outliers_removed$price), max(new_car_outliers_removed$price), by = 5000)) + 
+  ggtitle("Price Density")
+```
+
+#Information about car brand and their count
+```{r}
+ggplot(new_car_outliers_removed, aes(fct_infreq(brand), fill = brand)) +
+  geom_histogram(stat = "count", bidwidth = 30) +
+  labs(x = "Brand", y = "Total Count", title = "Total Count of All Brand") +
+  theme(axis.text.x = element_text(angle = 0)) +
+  coord_flip()
+
+new_car_outliers_removed %>%
+  group_by(brand) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+  
+```
+
+#Information about the car model and their count
+```{r}
+
+new_car_outliers_removed %>%
+  group_by(model) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+  
+new_car_outliers_removed %>%
+  count(model) %>%
+  ggplot(aes(x= reorder(model, n, sum), y= n, fill = model)) +
+  geom_col() + 
+  labs(x= "Model", y = "Total", title = "Total count") +
+  theme(legend.position = "none") +
+  coord_flip()
+```
+
+#The distribution of Mileage and Price
+```{r}
+ggplot(new_car_outliers_removed, aes(mileage, price)) +
+  geom_point(alpha =.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_continuous(breaks = seq(min(new_car_outliers_removed$mileage), max(new_car_outliers_removed$mileage), by = 50000)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Mileage & Price")
+```
+
+#The distribution of Brand and Price
+```{r}
+dfcount <- count(new_car_outliers_removed, brand)
+
+ggplot(new_car_outliers_removed, aes(brand, price)) +
+    geom_boxplot(fill='#A4A4A4', color="black") +
+  scale_y_continuous(breaks = seq(min(new_car_outliers_removed$price), max(new_car_outliers_removed$price), by = 2500)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+    geom_text(data = dfcount, aes(y = 0, label = n))
+```
+
+#What is the most expensive car model for each brand
+```{r}
+most_expensive <- new_car_outliers_removed %>%
+  group_by(brand) %>%
+  top_n(1,price) %>%
+  arrange(desc(price)) %>%
+  select(brand, price, model)  
+most_expensive
+```
+
+#The distribution of Year and Price
+```{r}
+give.n <- function(x){
+  return(c(y = median(x)*1.08, label = length(x))) 
+}
+ggplot(new_car_outliers_removed, aes(year, price)) +
+  geom_boxplot(fill='#A4A4A4', color="black") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#The distribution of Color & Price
+```{r}
+ggplot(new_car_outliers_removed, aes(color_collapsed, price)) +
+  geom_boxplot(fill='#A4A4A4', color="black") +
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median)  
+```
+#The distribution of State & Price
+```{r}
+ggplot(new_car_outliers_removed, aes(state, price)) +
+  geom_boxplot(fill='#A4A4A4', color="black") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median)  
+```
+
+#The distribution of Vehicle statue & Price
+```{r}
+ggplot(new_car_outliers_removed, aes(title_status, price)) +
+  geom_boxplot(fill='#A4A4A4', color="black") +
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median) 
+```
+
+#Correlation Test
+#===============================================================
+```{r}
+#Check the distribution of the data
+ggplot(new_car_outliers_removed, aes(price)) +
+  geom_histogram(bins = 50)
+
+
+#Pearson Correlation
+new_car_outliers_removed %>%
+  summarize(Total = n(), r = cor(mileage, price))
+
+#Spearman Correlation
+new_car_outliers_removed %>%
+  summarize(Total = n(), r = cor(mileage, price, method = "spearman"))
+#Becuase the data is not normal, spearman correlation was used for the correlation test
+```
+
+
+#Linear Regression
+#======================================================================
+
+#Filter out the very low counts levels for better regression analysis model
+```{r}
+new_car_outliers_removed <- new_car_outliers_removed  %>%
+  group_by(brand) %>%
+  filter(n() > 5) %>%
+  droplevels()
+
+new_car_outliers_removed <- new_car_outliers_removed  %>%
+  group_by(model) %>%
+  filter(n() > 5) %>%
+  droplevels()
+
+new_car_outliers_removed <- new_car_outliers_removed  %>%
+  group_by(color_collapsed) %>%
+  filter(n() > 5) %>%
+  droplevels()
+
+new_car_outliers_removed <- new_car_outliers_removed  %>%
+  group_by(year) %>%
+  filter(n() > 5) %>%
+  droplevels()
+
+new_car_outliers_removed <- new_car_outliers_removed  %>%
+  group_by(state) %>%
+  filter(n() > 5) %>%
+  droplevels()
+
+```
+
+
+#Regression analysis
+```{r}
+lm_before_remove_outliers <- lm(price ~., data = new_car_collapsed_knn)
+summary(lm_before_remove_outliers)
+lm_before_remove_outliers %>% glance()
+tidy(lm_before_remove_outliers)
+
+lm_after_remove_outliers <- lm(price ~., data = new_car_outliers_removed)
+summary(lm_after_remove_outliers)
+lm_after_remove_outliers %>% glance()
+tidy(lm_after_remove_outliers)
+```
+
+#Summary of the comparison of the regression model with and without outliers 
+```{r}
+compare_before <- list(glance(lm_before_remove_outliers))
+compare_after <- list(glance(lm_after_remove_outliers))
+
+compare <- bind_rows(compare_before, compare_after)
+compare1 <- as.data.frame(compare)
+rownames(compare1) <- c("Before", "After")
+compare1
+```
+
+#Plotting the residuals
+```{r}
+ggplot(lm_after_remove_outliers, aes(x=fitted(lm_after_remove_outliers), y=residuals(lm_after_remove_outliers))) +
+  geom_point() +
+  labs(x= "fitted", y = "residuals") +
+  geom_hline(yintercept = 0, linetype = "dashed")
+```
+
+#Predicting Linear Models
+```{r}
+set.seed(100)
+trainingRowIndex <- sample(1:nrow(new_car_outliers_removed), 0.8*nrow(new_car_outliers_removed))
+trainingData <- new_car_outliers_removed[trainingRowIndex, ]
+testData <- new_car_outliers_removed[-trainingRowIndex, ]
+
+lmMod <- lm(price ~., data= trainingData)
+PricePred <- predict(lmMod, newdata= testData, interval = "confidence")
+
+summary(lmMod)
+```
+
+#Accuracy of the Predicting model
+```{r}
+actuals_preds <- data.frame(cbind(actuals=testData$price, PricePred)) 
+
+head(actuals_preds)
+
+#Function for calculating MAE
+MAE <- function(actual, predicted){
+  mean(abs(actual - predicted))
+}
+
+linear_MAE <- MAE(testData$price, PricePred)
+paste("MAE: " , linear_MAE)
+
+#Function for calculating RMSE
+RMSE = function(actual, predicted){
+  sqrt(mean((actual - predicted)^2))
+}
+
+linear_RMSE <- RMSE(testData$price, PricePred)
+paste("RMSE: " , linear_RMSE)
+
+#In order to perform the regression analysis on the dataset, we have to first remove the very low count levels of factors.
+#The regression model with outliers removed have a standard error deviation of 5606. 
+#The coefficient of determination is 0.7109 and the adjusted r-square is 0.7056.
+#The F-statistic is 33.94
+#The MAE is 4464.305
+```
+
+#Create dummies variables for machine learning algorithms
+```{r}
+#Copy of the original dataset
+new_car_copy<- new_car_outliers_removed
+
+#Create dummy cols for category variables
+new_car_dummies <- fastDummies::dummy_cols(new_car_copy)
+
+#Remove original variables that had dummy coded
+new_car_dummies[, c("brand", "model", "year", "title_status", "state", "country", "color_collapsed")] <- list(NULL)
+head(new_car_dummies)
+dim(new_car_dummies)
+
+```
+
+
+#Regression tree
+```{r}
+set.seed(123)
+tree.index <- sample(1:nrow(new_car_dummies), 0.8*nrow(new_car_dummies))
+tree.trainingData <- new_car_dummies[trainingRowIndex, ]
+tree.testData <- new_car_dummies[-trainingRowIndex, ]
+
+
+tree.RegressionTree <- rpart(price ~., data = tree.trainingData)
+
+
+
+treePredict <- predict(tree.RegressionTree, newdata = tree.testData)
+summary(treePredict)
+
+
+
+#Diagram of the regression tree
+library(rpart.plot)
+rpart.plot(tree.RegressionTree, cex =0.47)
+
+#Calculate the MAE
+actuals_treepreds <- data.frame(cbind(actuals=tree.testData$price, predict=treePredict)) 
+head(actuals_treepreds)
+
+TreeMAE <- MAE(tree.testData$price, treePredict)
+TreeRMSE <- RMSE(tree.testData$price, treePredict)
+paste("MAE: " , TreeMAE)
+paste("RMSE: ", TreeRMSE)
+
+```
+
+#K Nearest Neighbors
+```{r}
+#Create a copy of the dataset
+KNN_reg <- new_car_dummies
+
+#Remove Price column from the dataset and create its own object
+price_outcome <- KNN_reg %>% select(price)
+KNN_reg <- KNN_reg %>% select(-price)
+
+```
+
+#Standardisation
+```{r}
+KNN_reg[, 'mileage'] <- scale(KNN_reg[, 'mileage'])
+```
+
+#Split data into training and testing
+```{r}
+set.seed(113)
+KNN.trainingRowIndex <- sample(1:nrow(KNN_reg), 0.8*nrow(KNN_reg))
+KNN.trainingData <- KNN_reg[KNN.trainingRowIndex, ]
+KNN.testData <- KNN_reg[-KNN.trainingRowIndex, ]
+
+p_outcome_train <- price_outcome[KNN.trainingRowIndex, ]
+p_outcome_test <- price_outcome[-KNN.trainingRowIndex, ]
+
+KNN.trainingData <- as.data.frame(KNN.trainingData)
+KNN.testData <- as.data.frame(KNN.testData)
+p_outcome_train <- as.data.frame(p_outcome_train)
+p_outcome_test <- as.data.frame(p_outcome_test)
+
+#Testing with different k
+knn_results <- knn.reg(KNN.trainingData, KNN.testData, p_outcome_train, k = 17)
+knn20_results <- knn.reg(KNN.trainingData, KNN.testData, p_outcome_train, k = 20)
+knn25_results <- knn.reg(KNN.trainingData, KNN.testData, p_outcome_train, k = 25)
+```
+
+
+#Result of the KNN prediction
+```{r}
+p_outcome_test_num <- as.numeric(as.character(p_outcome_test$price))
+plot(p_outcome_test_num, knn_results$pred, xlab="y", ylab=expression(hat(y)))
+
+actuals_KNNpreds <- data.frame(cbind(actuals=p_outcome_test_num, Prediction= knn_results$pred)) 
+head(actuals_KNNpreds)
+
+KNNMAE <- MAE(p_outcome_test_num, knn_results$pred)
+KNN20MAE <- MAE(p_outcome_test_num, knn20_results$pred)
+KNN25MAE <- MAE(p_outcome_test_num, knn25_results$pred)
+
+KNNMetricMAE <- "MAE"
+
+data.frame(cbind(Metric=KNNMetricMAE, KNN_with_17_K= KNNMAE, KNN_with_20_K=KNN20MAE, KNN_with_25_K=KNN25MAE))
+
+KNNRMSE <- RMSE(p_outcome_test_num, knn_results$pred)
+KNN20RMSE <- RMSE(p_outcome_test_num, knn20_results$pred)
+KNN25RMSE <- RMSE(p_outcome_test_num, knn25_results$pred)
+
+KNNMetricRMSE <- "RMSE"
+
+data.frame(cbind(Metric=KNNMetricRMSE, KNN_with_17_K= KNNRMSE, KNN_with_20_K=KNN20RMSE, KNN_with_25_K=KNN25RMSE))
+
+#KNN with 17 K have the best result
+```
+
+#Comparsion of the Mean Absolute Error(MAE) and RMSE
+```{r}
+compare_MAE <- data.frame(cbind(Linear_Regression=linear_MAE, Regression_Tree=TreeMAE, KNN=KNNMAE))
+compare_RMSE <- data.frame(cbind(Linear_Regression=linear_RMSE, Regression_Tree=TreeRMSE, KNN=KNNRMSE))
+comparsion <- rbind(compare_MAE, compare_RMSE) 
+
+Metric <- c("MAE", "RMSE")
+
+comparsion <- cbind(Metric, comparsion)
+print(comparsion)
+```
+
+#Conclusion
+#Mean Absolute Error(MAE) was used as a evluation metric for all the different regression models. MAE calculate the amount of errors of the predicted value from the actual value and find the average of all absolute errors.The lower the MAE mean the higher accuracy for the model.
+#In the MAE comparsion of all three models, Linear Regression have the highest accuracy in predicting the price with a total of 4464 score in MAE, the second highest accuracy model is KNN and the last is Regression Tree.
+#In the RMSE comparsion, Linear Regression have the lowest RMSE, which indicate the Linear Regression model have better accuracy in predicts the response. The Second best fit model is KNN and the last is Regression Tree.
+
+#With the Comparsion of both MAE and RMSE, we can conclude that Linear Regression Model have the highest accuracy in predicting the price of the cars.
